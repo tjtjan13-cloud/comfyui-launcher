@@ -47,9 +47,11 @@ CONFIG_FILE = ROOT / "launcher.json"
 MIN_PYTHON = (3, 10)
 DEFAULT_PORT = 8188
 DEFAULT_HOST = "127.0.0.1"
-# Newest first. cu121 ships no Python 3.13 wheels, and Blackwell GPUs
-# (RTX 50 series, compute capability 12.x) need CUDA 12.8+.
+# Newest first. cu121 ships no Python 3.13 wheels. Blackwell GPUs
+# (RTX 50 series, compute capability 12.x) need CUDA 12.8+ to run at
+# all, and ComfyUI recommends CUDA 13.0+ for full performance on them.
 TORCH_CUDA_INDEXES = [
+    "https://download.pytorch.org/whl/cu130",
     "https://download.pytorch.org/whl/cu128",
     "https://download.pytorch.org/whl/cu126",
     "https://download.pytorch.org/whl/cu121",
@@ -140,13 +142,14 @@ def cuda_index_candidates(torch_index=None, compute_cap=None):
 
     - An explicit --torch-index (or config value) always wins.
     - Blackwell GPUs (compute capability 12.x, RTX 50 series) only work
-      with CUDA 12.8+, so only cu128 is tried for them.
+      with CUDA 12.8+, and run best on CUDA 13.0+, so only cu130/cu128
+      are tried for them.
     - cu121 ships no Python 3.13 wheels, so it is skipped on Python 3.13+.
     """
     if torch_index:
         return [torch_index]
     if compute_cap is not None and compute_cap >= 12.0:
-        return [TORCH_CUDA_INDEXES[0]]
+        return TORCH_CUDA_INDEXES[:2]
     candidates = list(TORCH_CUDA_INDEXES)
     if sys.version_info >= (3, 13):
         candidates = [c for c in candidates if "cu121" not in c]

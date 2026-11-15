@@ -5,7 +5,7 @@
 ## 功能
 
 - 自動建立 Python 虛擬環境（`./venv`）
-- 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版；CUDA 版本會依顯卡和 Python 版本自動選擇（RTX 50 系列用 CUDA 12.8）
+- 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版；CUDA 版本會依顯卡和 Python 版本自動選擇（RTX 50 系列用 CUDA 13.0）
 - 自動下載 ComfyUI（`./ComfyUI`，git 失敗時自動重試，仍失敗改用 ZIP 下載）並安裝依賴
 - 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
 - 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
@@ -81,7 +81,10 @@ start.bat --port 8189 --update
 先試 `start.bat --reinstall`。若仍失敗，把視窗裡的錯誤訊息貼出來檢查。
 
 **出現 No matching distribution found for torch？**
-通常是 Python 版本和 PyTorch 下載來源不匹配：例如 Python 3.13 沒有 CUDA 12.1 的 PyTorch，而 RTX 50 系列顯卡必須用 CUDA 12.8 以上。啟動器會自動從最新的 CUDA 版本開始嘗試，失敗時依序換舊版本；也可以手動指定，例如 `start.bat --reinstall --torch-index https://download.pytorch.org/whl/cu128`。
+通常是 Python 版本和 PyTorch 下載來源不匹配：例如 Python 3.13 沒有 CUDA 12.1 的 PyTorch，而 RTX 50 系列顯卡必須用 CUDA 12.8 以上。啟動器會自動從最新的 CUDA 版本開始嘗試，失敗時依序換舊版本；也可以手動指定，例如 `start.bat --reinstall --torch-index https://download.pytorch.org/whl/cu130`。
+
+**ComfyUI 說 PYTORCH CUDA VERSION BELOW 13.0？**
+這是 ComfyUI 建議 RTX 50 系列顯卡用 CUDA 13.0 以上的 PyTorch 以獲得完整效能。執行 `start.bat --reinstall`，啟動器會重新安裝並優先使用 cu130 版本。
 
 **git clone 失敗，出現 SSL/TLS connection failed？**
 這是 git 連 GitHub 時的安全連線問題，通常是暫時的，重試一次大多能成功。啟動器會自動重試 3 次，失敗時改用直接下載 ZIP 的方式。如果一直失敗，檢查 VPN、代理、防火牆或防毒軟體是否擋住了 git，或確認系統時間正確。也可以手動從 https://github.com/comfyanonymous/ComfyUI 下載 ZIP，解壓到 ComfyUI 資料夾（讓 main.py 位於 `./ComfyUI/main.py`），再執行啟動器。
