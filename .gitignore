@@ -1,0 +1,14 @@
+# Virtual environment (created by the launcher)
+venv/
+.venv/
+
+# ComfyUI checkout (cloned by the launcher)
+ComfyUI/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Logs and local state
+*.log

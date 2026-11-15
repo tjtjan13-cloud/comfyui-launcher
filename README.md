@@ -1,0 +1,89 @@
+# ComfyUI Launcher
+
+一鍵安裝並啟動 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 的啟動器，以 Windows 為主，也支援 macOS 與 Linux。第一次執行會自動完成環境設定，之後雙擊即可啟動。
+
+## 功能
+
+- 自動建立 Python 虛擬環境（`./venv`）
+- 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版
+- 自動下載 ComfyUI（`./ComfyUI`）並安裝依賴
+- 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
+- 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
+- 設定可寫在 `launcher.json` 裡永久保存
+
+## 需求
+
+- Windows 10 / 11（macOS、Linux 也可使用）
+- Python 3.10 以上（建議 3.11 或 3.12），安裝時勾選 **Add python.exe to PATH**
+- Git（https://git-scm.com/downloads）
+- NVIDIA 顯示卡（建議；沒有也能用 CPU 模式，只是生成速度慢很多）
+
+## 快速開始
+
+1. 下載或 clone 這個倉庫。
+2. 雙擊 `start.bat`。
+3. 第一次執行會下載並安裝環境，需要幾分鐘，請耐心等候。
+4. 瀏覽器會自動開啟 ComfyUI。關閉時在啟動器視窗按 `Ctrl+C`。
+
+macOS / Linux：
+
+```bash
+python3 launcher.py
+```
+
+## 命令列選項
+
+| 選項 | 說明 |
+| --- | --- |
+| `--port 8189` | 更換監聽端口（預設 8188） |
+| `--host 0.0.0.0` | 允許區域網路內其他裝置連線 |
+| `--update` | 啟動前先更新 ComfyUI（`git pull`） |
+| `--reinstall` | 重新安裝 Python 依賴 |
+| `--cpu` | 強制使用 CPU 版 PyTorch |
+| `--no-browser` | 不自動開啟瀏覽器 |
+| `--skip-install` | 跳過依賴安裝步驟 |
+| `--comfyui-dir 路徑` | 使用已有的 ComfyUI 資料夾 |
+| `-- --lowvram` | `--` 之後的參數會直接傳給 ComfyUI |
+
+範例：
+
+```bat
+start.bat --port 8189 --update
+```
+
+## 設定檔
+
+在 `launcher.json` 裡可以保存預設值（不存在時使用內建預設）：
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 8188,
+  "extra_args": [],
+  "auto_open_browser": true
+}
+```
+
+## 常見問題
+
+**提示找不到 Python？**
+重新安裝 Python，安裝時務必勾選 **Add python.exe to PATH**，然後重新開啟命令提示字元。
+
+**提示找不到 git？**
+安裝 Git（https://git-scm.com/downloads），安裝時選擇讓 git 可在命令列中使用。
+
+**端口 8188 已被佔用？**
+先關掉佔用該端口的程式，或換一個端口：`start.bat --port 8189`。
+
+**依賴安裝失敗？**
+先試 `start.bat --reinstall`。若仍失敗，把視窗裡的錯誤訊息貼出來檢查。
+
+**如何更新 ComfyUI？**
+執行 `start.bat --update`，或在 ComfyUI 資料夾裡執行 `git pull`。
+
+**模型放哪裡？**
+放在 `ComfyUI\models\` 下對應的子資料夾，例如 checkpoints 放在 `ComfyUI\models\checkpoints\`。
+
+## 授權
+
+MIT License。
