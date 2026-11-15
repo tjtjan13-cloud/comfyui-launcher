@@ -8,6 +8,7 @@
 - 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版；CUDA 版本會依顯卡和 Python 版本自動選擇（RTX 50 系列用 CUDA 13.0）
 - 自動下載 ComfyUI（`./ComfyUI`，git 失敗時自動重試，仍失敗改用 ZIP 下載）並安裝依賴
 - 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
+- 自動安裝 [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager)（自訂節點管理器），啟動後在 ComfyUI 介面裡點 Manager 按鈕就能安裝節點和模型
 - 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
 - 設定可寫在 `launcher.json` 裡永久保存
 
@@ -41,6 +42,7 @@ python3 launcher.py
 | `--reinstall` | 重新安裝 Python 依賴 |
 | `--cpu` | 強制使用 CPU 版 PyTorch |
 | `--torch-index 網址` | 指定 PyTorch 下載來源，例如 `https://download.pytorch.org/whl/cu121`（舊顯卡用） |
+| `--no-manager` | 不安裝 ComfyUI-Manager |
 | `--no-browser` | 不自動開啟瀏覽器 |
 | `--skip-install` | 跳過依賴安裝步驟 |
 | `--comfyui-dir 路徑` | 使用已有的 ComfyUI 資料夾 |
@@ -62,7 +64,8 @@ start.bat --port 8189 --update
   "port": 8188,
   "extra_args": [],
   "auto_open_browser": true,
-  "torch_index": null
+  "torch_index": null,
+  "install_manager": true
 }
 ```
 
@@ -91,6 +94,9 @@ start.bat --port 8189 --update
 
 **如何更新 ComfyUI？**
 執行 `start.bat --update`，或在 ComfyUI 資料夾裡執行 `git pull`。
+
+**怎麼用 Manager 安裝自訂節點或模型？**
+啟動後點 ComfyUI 介面右側的 Manager 按鈕，裡面可以搜尋並安裝自訂節點、模型和工作流。啟動器會在第一次啟動時自動裝好 Manager；不想裝的話用 `start.bat --no-manager`。
 
 **模型放哪裡？**
 放在 `ComfyUI\models\` 下對應的子資料夾，例如 checkpoints 放在 `ComfyUI\models\checkpoints\`。

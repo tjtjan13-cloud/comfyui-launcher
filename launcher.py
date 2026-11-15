@@ -9,7 +9,8 @@ One-command setup + launch for ComfyUI:
      auto-detected from the GPU and Python version, newest first.
   4. Gets ComfyUI (./ComfyUI) on first run — git clone with retries,
      falling back to a direct ZIP download — or updates it with --update.
-  5. Starts the ComfyUI server and opens it in the browser.
+  5. Installs ComfyUI-Manager (the custom node manager) on first run.
+  6. Starts the ComfyUI server and opens it in the browser.
 
 Usage:
   Double-click start.bat (Windows), or run:
@@ -40,6 +41,8 @@ VENV_DIR = ROOT / "venv"
 COMFYUI_DIR = ROOT / "ComfyUI"
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
 COMFYUI_ZIP_URL = "https://codeload.github.com/comfyanonymous/ComfyUI/zip/refs/heads/master"
+MANAGER_REPO = "https://github.com/ltdrdata/ComfyUI-Manager.git"
+MANAGER_DIRNAME = "ComfyUI-Manager"
 CLONE_ATTEMPTS = 3
 CLONE_RETRY_DELAY = 5  # seconds
 CONFIG_FILE = ROOT / "launcher.json"
@@ -240,6 +243,42 @@ def ensure_comfyui(update: bool) -> None:
         log("ComfyUI found: ./ComfyUI")
 
 
+def ensure_manager(python: Path, update: bool) -> None:
+    """Install ComfyUI-Manager (custom node manager) on first run.
+
+    Non-fatal: if the download fails, ComfyUI still launches.
+    """
+    manager_dir = COMFYUI_DIR / "custom_nodes" / MANAGER_DIRNAME
+    if not (manager_dir / "__init__.py").exists():
+        if manager_dir.exists():
+            log("Removing incomplete ComfyUI-Manager folder ...")
+            shutil.rmtree(manager_dir, ignore_errors=True)
+        log("Installing ComfyUI-Manager ...")
+        # Shallow clone: the Manager repo history is large and not needed.
+        result = run(["git", "clone", "--depth", "1", MANAGER_REPO,
+                      str(manager_dir)], check=False)
+        if result.returncode != 0 or not (manager_dir / "__init__.py").exists():
+            log("WARNING: Could not download ComfyUI-Manager; continuing "
+                "without it. You can install it later from "
+                "https://github.com/ltdrdata/ComfyUI-Manager")
+            if manager_dir.exists():
+                shutil.rmtree(manager_dir, ignore_errors=True)
+            return
+        requirements = manager_dir / "requirements.txt"
+        if requirements.exists():
+            log("Installing ComfyUI-Manager requirements ...")
+            result = pip_install(python, ["-r", str(requirements)], check=False)
+            if result.returncode != 0:
+                log("WARNING: ComfyUI-Manager requirements failed to install; "
+                    "the Manager may not work fully.")
+        log("ComfyUI-Manager installed.")
+    elif update and (manager_dir / ".git").exists():
+        log("Updating ComfyUI-Manager (git pull) ...")
+        run(["git", "pull"], cwd=str(manager_dir), check=False)
+    else:
+        log("ComfyUI-Manager found.")
+
+
 def pip_install(python: Path, packages, index_url=None, check=True):
     cmd = [str(python), "-m", "pip", "install"]
     if index_url:
@@ -321,6 +360,7 @@ def load_config() -> dict:
         "extra_args": [],
         "auto_open_browser": True,
         "torch_index": None,
+        "install_manager": True,
     }
     if not CONFIG_FILE.exists():
         return defaults
@@ -352,6 +392,9 @@ def parse_args(config: dict) -> argparse.Namespace:
                         help="PyTorch wheel index URL to use instead of "
                              "auto-detection, e.g. "
                              "https://download.pytorch.org/whl/cu121")
+    parser.add_argument("--no-manager", action="store_true",
+                        default=not config.get("install_manager", True),
+                        help="do not install ComfyUI-Manager")
     parser.add_argument("--no-browser", action="store_true",
                         help="do not open the browser automatically")
     parser.add_argument("--skip-install", action="store_true",
@@ -382,6 +425,8 @@ def main() -> int:
     if not args.skip_install:
         ensure_dependencies(python, cpu_only=args.cpu, reinstall=args.reinstall,
                             torch_index=args.torch_index)
+    if not args.no_manager:
+        ensure_manager(python, update=args.update)
 
     host, port = args.host, args.port
     if port_in_use(host, port):
