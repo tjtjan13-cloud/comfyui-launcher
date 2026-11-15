@@ -7,7 +7,8 @@ One-command setup + launch for ComfyUI:
   3. Installs PyTorch (CUDA if an NVIDIA GPU is found, else CPU) and
      ComfyUI's requirements on first run. The CUDA wheel index is
      auto-detected from the GPU and Python version, newest first.
-  4. Clones ComfyUI (./ComfyUI) on first run, or updates it with --update.
+  4. Gets ComfyUI (./ComfyUI) on first run — git clone with retries,
+     falling back to a direct ZIP download — or updates it with --update.
   5. Starts the ComfyUI server and opens it in the browser.
 
 Usage:
@@ -27,14 +28,20 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.request
 import webbrowser
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
 COMFYUI_DIR = ROOT / "ComfyUI"
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
+COMFYUI_ZIP_URL = "https://codeload.github.com/comfyanonymous/ComfyUI/zip/refs/heads/master"
+CLONE_ATTEMPTS = 3
+CLONE_RETRY_DELAY = 5  # seconds
 CONFIG_FILE = ROOT / "launcher.json"
 
 MIN_PYTHON = (3, 10)
@@ -160,14 +167,72 @@ def ensure_venv() -> Path:
     return python
 
 
+def clone_comfyui() -> bool:
+    """Clone ComfyUI with git, retrying transient failures. Returns success."""
+    for attempt in range(1, CLONE_ATTEMPTS + 1):
+        log(f"Cloning ComfyUI (attempt {attempt}/{CLONE_ATTEMPTS}) ...")
+        result = run(["git", "clone", COMFYUI_REPO, str(COMFYUI_DIR)], check=False)
+        if result.returncode == 0 and (COMFYUI_DIR / "main.py").exists():
+            return True
+        # A failed clone can leave a partial directory behind, and git
+        # refuses to clone into a non-empty directory, so remove it first.
+        if COMFYUI_DIR.exists():
+            shutil.rmtree(COMFYUI_DIR, ignore_errors=True)
+        if attempt < CLONE_ATTEMPTS:
+            log(f"Clone failed; retrying in {CLONE_RETRY_DELAY}s ...")
+            time.sleep(CLONE_RETRY_DELAY)
+    return False
+
+
+def download_comfyui_zip() -> bool:
+    """Download ComfyUI as a ZIP (fallback when git clone fails)."""
+    log("Git clone failed; trying a direct ZIP download instead ...")
+    try:
+        request = urllib.request.Request(
+            COMFYUI_ZIP_URL, headers={"User-Agent": "ComfyUI-Launcher"}
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "ComfyUI.zip"
+            with urllib.request.urlopen(request, timeout=180) as response, \
+                    open(zip_path, "wb") as f:
+                shutil.copyfileobj(response, f)
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(tmp)
+            extracted = next(Path(tmp).glob("ComfyUI-*"))
+            shutil.move(str(extracted), str(COMFYUI_DIR))
+    except Exception as exc:  # network error, bad zip, ...
+        log(f"ZIP download failed: {exc}")
+        return False
+    return (COMFYUI_DIR / "main.py").exists()
+
+
 def ensure_comfyui(update: bool) -> None:
-    """Clone ComfyUI on first run; pull latest with --update."""
+    """Get ComfyUI on first run; pull latest with --update (git installs)."""
     if not (COMFYUI_DIR / "main.py").exists():
-        log("Cloning ComfyUI ...")
-        run(["git", "clone", COMFYUI_REPO, str(COMFYUI_DIR)])
-    elif update:
-        log("Updating ComfyUI (git pull) ...")
-        run(["git", "pull"], cwd=str(COMFYUI_DIR))
+        # A previous failed run may have left a partial directory behind.
+        if COMFYUI_DIR.exists():
+            log("Removing incomplete ComfyUI folder from a previous run ...")
+            shutil.rmtree(COMFYUI_DIR, ignore_errors=True)
+        if clone_comfyui():
+            return
+        if download_comfyui_zip():
+            log("ComfyUI downloaded (ZIP install; --update needs a git checkout).")
+            return
+        raise fail(
+            "Could not download ComfyUI. Check your network connection and "
+            "try again (a VPN, proxy, firewall or antivirus can block git). "
+            "You can also download the ZIP yourself from "
+            "https://github.com/comfyanonymous/ComfyUI and extract it so that "
+            "main.py sits at ./ComfyUI/main.py, then run the launcher again."
+        )
+    if update:
+        if not (COMFYUI_DIR / ".git").exists():
+            log("ComfyUI was installed from a ZIP, so --update cannot pull "
+                "updates; re-download it to update. Continuing with the "
+                "installed version.")
+        else:
+            log("Updating ComfyUI (git pull) ...")
+            run(["git", "pull"], cwd=str(COMFYUI_DIR))
     else:
         log("ComfyUI found: ./ComfyUI")
 
