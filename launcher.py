@@ -5,7 +5,8 @@ One-command setup + launch for ComfyUI:
   1. Checks the Python version.
   2. Creates a virtual environment (./venv) on first run.
   3. Installs PyTorch (CUDA if an NVIDIA GPU is found, else CPU) and
-     ComfyUI's requirements on first run.
+     ComfyUI's requirements on first run. The CUDA wheel index is
+     auto-detected from the GPU and Python version, newest first.
   4. Clones ComfyUI (./ComfyUI) on first run, or updates it with --update.
   5. Starts the ComfyUI server and opens it in the browser.
 
@@ -39,7 +40,13 @@ CONFIG_FILE = ROOT / "launcher.json"
 MIN_PYTHON = (3, 10)
 DEFAULT_PORT = 8188
 DEFAULT_HOST = "127.0.0.1"
-TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu121"
+# Newest first. cu121 ships no Python 3.13 wheels, and Blackwell GPUs
+# (RTX 50 series, compute capability 12.x) need CUDA 12.8+.
+TORCH_CUDA_INDEXES = [
+    "https://download.pytorch.org/whl/cu128",
+    "https://download.pytorch.org/whl/cu126",
+    "https://download.pytorch.org/whl/cu121",
+]
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 SERVER_WAIT_TIMEOUT = 180  # seconds
 
@@ -92,25 +99,51 @@ def check_git() -> None:
         )
 
 
-def has_nvidia_gpu() -> bool:
-    """True when nvidia-smi runs and reports at least one GPU."""
+def detect_gpu():
+    """Return (name, compute_capability) of the first NVIDIA GPU, or (None, None)."""
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi is None:
-        return False
+        return None, None
     try:
         result = subprocess.run(
-            [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"],
+            [nvidia_smi, "--query-gpu=name,compute_cap", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=15,
         )
     except (subprocess.SubprocessError, OSError):
-        return False
+        return None, None
     if result.returncode != 0:
-        return False
-    gpus = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if gpus:
-        log(f"Detected GPU: {gpus[0]}")
-        return True
-    return False
+        return None, None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        name, _, cap_text = line.rpartition(",")
+        name = name.strip()
+        cap = None
+        try:
+            cap = float(cap_text.strip())
+        except ValueError:
+            cap = None
+        return name, cap
+    return None, None
+
+
+def cuda_index_candidates(torch_index=None, compute_cap=None):
+    """Ordered PyTorch CUDA indexes to try, newest first.
+
+    - An explicit --torch-index (or config value) always wins.
+    - Blackwell GPUs (compute capability 12.x, RTX 50 series) only work
+      with CUDA 12.8+, so only cu128 is tried for them.
+    - cu121 ships no Python 3.13 wheels, so it is skipped on Python 3.13+.
+    """
+    if torch_index:
+        return [torch_index]
+    if compute_cap is not None and compute_cap >= 12.0:
+        return [TORCH_CUDA_INDEXES[0]]
+    candidates = list(TORCH_CUDA_INDEXES)
+    if sys.version_info >= (3, 13):
+        candidates = [c for c in candidates if "cu121" not in c]
+    return candidates
 
 
 def ensure_venv() -> Path:
@@ -139,15 +172,39 @@ def ensure_comfyui(update: bool) -> None:
         log("ComfyUI found: ./ComfyUI")
 
 
-def pip_install(python: Path, packages, index_url=None) -> None:
+def pip_install(python: Path, packages, index_url=None, check=True):
     cmd = [str(python), "-m", "pip", "install"]
     if index_url:
         cmd += ["--index-url", index_url]
     cmd += packages
-    run(cmd)
+    return run(cmd, check=check)
 
 
-def ensure_dependencies(python: Path, cpu_only: bool, reinstall: bool) -> None:
+def install_cuda_torch(python: Path, torch_index=None, compute_cap=None) -> None:
+    """Install CUDA PyTorch, trying indexes newest-first until one works."""
+    candidates = cuda_index_candidates(torch_index, compute_cap)
+    for i, index_url in enumerate(candidates):
+        cuda_tag = index_url.rsplit("/", 1)[-1]  # e.g. "cu128"
+        log(f"Installing PyTorch ({cuda_tag}) ...")
+        result = pip_install(
+            python, ["torch", "torchvision", "torchaudio"], index_url, check=False
+        )
+        if result.returncode == 0:
+            log(f"PyTorch installed from {cuda_tag}.")
+            return
+        if i + 1 < len(candidates):
+            log(f"Install from {cuda_tag} failed; trying the next index ...")
+    raise fail(
+        "Could not install PyTorch from any CUDA index. "
+        "Check your network connection, then retry. If your GPU is older "
+        "(GTX 10 series or earlier), try an older index explicitly, e.g.: "
+        "python launcher.py --reinstall --torch-index "
+        "https://download.pytorch.org/whl/cu121"
+    )
+
+
+def ensure_dependencies(python: Path, cpu_only: bool, reinstall: bool,
+                        torch_index=None) -> None:
     """Install torch + ComfyUI requirements (first run, or --reinstall)."""
     marker = VENV_DIR / ".deps-installed"
     if marker.exists() and not reinstall:
@@ -156,12 +213,14 @@ def ensure_dependencies(python: Path, cpu_only: bool, reinstall: bool) -> None:
     if cpu_only:
         log("Installing PyTorch (CPU) ...")
         pip_install(python, ["torch", "torchvision", "torchaudio"], TORCH_CPU_INDEX)
-    elif has_nvidia_gpu():
-        log("Installing PyTorch (CUDA 12.1) ...")
-        pip_install(python, ["torch", "torchvision", "torchaudio"], TORCH_CUDA_INDEX)
     else:
-        log("No NVIDIA GPU detected; installing PyTorch (CPU) ...")
-        pip_install(python, ["torch", "torchvision", "torchaudio"], TORCH_CPU_INDEX)
+        gpu_name, compute_cap = detect_gpu()
+        if gpu_name is None:
+            log("No NVIDIA GPU detected; installing PyTorch (CPU) ...")
+            pip_install(python, ["torch", "torchvision", "torchaudio"], TORCH_CPU_INDEX)
+        else:
+            log(f"Detected GPU: {gpu_name}")
+            install_cuda_torch(python, torch_index, compute_cap)
     requirements = COMFYUI_DIR / "requirements.txt"
     if requirements.exists():
         log("Installing ComfyUI requirements ...")
@@ -193,6 +252,7 @@ def load_config() -> dict:
         "port": DEFAULT_PORT,
         "extra_args": [],
         "auto_open_browser": True,
+        "torch_index": None,
     }
     if not CONFIG_FILE.exists():
         return defaults
@@ -220,6 +280,10 @@ def parse_args(config: dict) -> argparse.Namespace:
                         help="reinstall Python dependencies before launching")
     parser.add_argument("--cpu", action="store_true",
                         help="force CPU PyTorch even if an NVIDIA GPU is present")
+    parser.add_argument("--torch-index", default=config.get("torch_index"),
+                        help="PyTorch wheel index URL to use instead of "
+                             "auto-detection, e.g. "
+                             "https://download.pytorch.org/whl/cu121")
     parser.add_argument("--no-browser", action="store_true",
                         help="do not open the browser automatically")
     parser.add_argument("--skip-install", action="store_true",
@@ -248,7 +312,8 @@ def main() -> int:
     COMFYUI_DIR = comfyui_dir
     ensure_comfyui(update=args.update)
     if not args.skip_install:
-        ensure_dependencies(python, cpu_only=args.cpu, reinstall=args.reinstall)
+        ensure_dependencies(python, cpu_only=args.cpu, reinstall=args.reinstall,
+                            torch_index=args.torch_index)
 
     host, port = args.host, args.port
     if port_in_use(host, port):

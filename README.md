@@ -5,7 +5,7 @@
 ## 功能
 
 - 自動建立 Python 虛擬環境（`./venv`）
-- 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版
+- 自動偵測 NVIDIA 顯示卡：有 GPU 裝 CUDA 版 PyTorch，沒有就裝 CPU 版；CUDA 版本會依顯卡和 Python 版本自動選擇（RTX 50 系列用 CUDA 12.8）
 - 自動下載 ComfyUI（`./ComfyUI`）並安裝依賴
 - 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
 - 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
@@ -40,6 +40,7 @@ python3 launcher.py
 | `--update` | 啟動前先更新 ComfyUI（`git pull`） |
 | `--reinstall` | 重新安裝 Python 依賴 |
 | `--cpu` | 強制使用 CPU 版 PyTorch |
+| `--torch-index 網址` | 指定 PyTorch 下載來源，例如 `https://download.pytorch.org/whl/cu121`（舊顯卡用） |
 | `--no-browser` | 不自動開啟瀏覽器 |
 | `--skip-install` | 跳過依賴安裝步驟 |
 | `--comfyui-dir 路徑` | 使用已有的 ComfyUI 資料夾 |
@@ -60,7 +61,8 @@ start.bat --port 8189 --update
   "host": "127.0.0.1",
   "port": 8188,
   "extra_args": [],
-  "auto_open_browser": true
+  "auto_open_browser": true,
+  "torch_index": null
 }
 ```
 
@@ -77,6 +79,9 @@ start.bat --port 8189 --update
 
 **依賴安裝失敗？**
 先試 `start.bat --reinstall`。若仍失敗，把視窗裡的錯誤訊息貼出來檢查。
+
+**出現 No matching distribution found for torch？**
+通常是 Python 版本和 PyTorch 下載來源不匹配：例如 Python 3.13 沒有 CUDA 12.1 的 PyTorch，而 RTX 50 系列顯卡必須用 CUDA 12.8 以上。啟動器會自動從最新的 CUDA 版本開始嘗試，失敗時依序換舊版本；也可以手動指定，例如 `start.bat --reinstall --torch-index https://download.pytorch.org/whl/cu128`。
 
 **如何更新 ComfyUI？**
 執行 `start.bat --update`，或在 ComfyUI 資料夾裡執行 `git pull`。
