@@ -10,13 +10,18 @@ One-command setup + launch for ComfyUI:
   4. Gets ComfyUI (./ComfyUI) on first run — git clone with retries,
      falling back to a direct ZIP download — or updates it with --update.
   5. Installs ComfyUI-Manager (the custom node manager) on first run.
-  6. Starts the ComfyUI server and opens it in the browser.
+  6. Installs optional acceleration libraries requested via --extras or
+     the "extras" key in launcher.json (sageattention, flash-attn,
+     llama-cpp, triton). Each is skipped when already installed, and a
+     failed install only warns — ComfyUI still launches.
+  7. Starts the ComfyUI server and opens it in the browser.
 
 Usage:
   Double-click start.bat (Windows), or run:
       python launcher.py
       python launcher.py --port 8189 --update
       python launcher.py --cpu --no-browser
+      python launcher.py --extras sageattention,triton
 
 Persistent defaults live in launcher.json next to this file.
 Only the Python standard library is used.
@@ -61,6 +66,33 @@ TORCH_CUDA_INDEXES = [
 ]
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 SERVER_WAIT_TIMEOUT = 180  # seconds
+# Optional acceleration libraries, installed on request via --extras or the
+# "extras" key in launcher.json. Each entry maps a short name to
+# (pip package, import name, hint shown when the install fails).
+# PyTorch itself is always installed by the launcher, so it is not an extra.
+EXTRAS = {
+    "sageattention": (
+        "sageattention", "sageattention",
+        "SageAttention needs a prebuilt wheel matching your torch/CUDA; "
+        "see https://github.com/thu-ml/SageAttention for supported versions.",
+    ),
+    "flash-attn": (
+        "flash-attn", "flash_attn",
+        "flash-attn ships prebuilt wheels only for some Windows/torch "
+        "combinations; without one it must be built from source, which "
+        "needs a CUDA toolkit and takes a long time.",
+    ),
+    "llama-cpp": (
+        "llama-cpp-python", "llama_cpp",
+        "The default llama-cpp-python wheel is CPU-only; a CUDA build "
+        "needs CMAKE_ARGS=-DGGML_CUDA=on (see its docs).",
+    ),
+    "triton": (
+        "triton", "triton",
+        "Triton usually comes with PyTorch already; installing it "
+        "separately is rarely needed.",
+    ),
+}
 
 
 def log(msg: str) -> None:
@@ -336,6 +368,59 @@ def ensure_dependencies(python: Path, cpu_only: bool, reinstall: bool,
     log("Dependencies installed.")
 
 
+def module_installed(python: Path, module: str) -> bool:
+    """Check whether a module is importable in the venv."""
+    code = (
+        "import importlib.util, sys; "
+        f"sys.exit(0 if importlib.util.find_spec({module!r}) else 1)"
+    )
+    try:
+        result = subprocess.run([str(python), "-c", code],
+                                capture_output=True, timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return result.returncode == 0
+
+
+def install_extra(python: Path, name: str) -> bool:
+    """Install one optional extra (best effort). Returns True on success.
+
+    Already-installed extras are skipped. Installs use prebuilt wheels
+    only (--only-binary), so a missing wheel fails fast instead of
+    triggering a long source build (flash-attn can take 20+ minutes
+    to build from source on Windows).
+    """
+    package, module, hint = EXTRAS[name]
+    if module_installed(python, module):
+        log(f"Extra '{name}' already installed; skipping.")
+        return True
+    log(f"Installing extra '{name}' ({package}) ...")
+    result = pip_install(python, ["--only-binary", ":all:", package], check=False)
+    if result.returncode == 0:
+        log(f"Extra '{name}' installed.")
+        return True
+    log(f"WARNING: could not install extra '{name}' (no prebuilt wheel "
+        f"found for this Python/torch/CUDA combination). {hint}")
+    return False
+
+
+def ensure_extras(python: Path, extras) -> None:
+    """Install the requested optional extras. Failures only warn."""
+    wanted = []
+    for raw in extras or []:
+        name = str(raw).strip().lower()
+        if not name:
+            continue
+        if name not in EXTRAS:
+            log(f"WARNING: unknown extra '{name}' (known extras: "
+                f"{', '.join(sorted(EXTRAS))}); skipping.")
+            continue
+        if name not in wanted:
+            wanted.append(name)
+    for name in wanted:
+        install_extra(python, name)
+
+
 def port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(1)
@@ -361,6 +446,7 @@ def load_config() -> dict:
         "auto_open_browser": True,
         "torch_index": None,
         "install_manager": True,
+        "extras": [],
     }
     if not CONFIG_FILE.exists():
         return defaults
@@ -392,6 +478,12 @@ def parse_args(config: dict) -> argparse.Namespace:
                         help="PyTorch wheel index URL to use instead of "
                              "auto-detection, e.g. "
                              "https://download.pytorch.org/whl/cu121")
+    parser.add_argument("--extras", default=None, metavar="LIST",
+                        help="comma-separated optional acceleration "
+                             "libraries to install, e.g. "
+                             "--extras sageattention,flash-attn,llama-cpp,"
+                             "triton (choices: "
+                             + ", ".join(sorted(EXTRAS)) + ")")
     parser.add_argument("--no-manager", action="store_true",
                         default=not config.get("install_manager", True),
                         help="do not install ComfyUI-Manager")
@@ -425,6 +517,13 @@ def main() -> int:
     if not args.skip_install:
         ensure_dependencies(python, cpu_only=args.cpu, reinstall=args.reinstall,
                             torch_index=args.torch_index)
+        extras = config.get("extras") or []
+        if isinstance(extras, str):
+            extras = extras.split(",")
+        extras = list(extras)
+        if args.extras:
+            extras += [e.strip() for e in args.extras.split(",")]
+        ensure_extras(python, extras)
     if not args.no_manager:
         ensure_manager(python, update=args.update)
 

@@ -9,6 +9,7 @@
 - 自動下載 ComfyUI（`./ComfyUI`，git 失敗時自動重試，仍失敗改用 ZIP 下載）並安裝依賴
 - 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
 - 自動安裝 [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager)（自訂節點管理器），啟動後在 ComfyUI 介面裡點 Manager 按鈕就能安裝節點和模型
+- 可選安裝加速函式庫：`--extras sageattention,flash-attn,llama-cpp,triton`（或寫在 `launcher.json` 的 `extras` 裡），已安裝的會自動跳過，安裝失敗只會警告、不會影響啟動
 - 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
 - 設定可寫在 `launcher.json` 裡永久保存
 
@@ -42,6 +43,7 @@ python3 launcher.py
 | `--reinstall` | 重新安裝 Python 依賴 |
 | `--cpu` | 強制使用 CPU 版 PyTorch |
 | `--torch-index 網址` | 指定 PyTorch 下載來源，例如 `https://download.pytorch.org/whl/cu121`（舊顯卡用） |
+| `--extras 清單` | 安裝可選加速函式庫，逗號分隔，例如 `--extras sageattention,triton`（可選：sageattention、flash-attn、llama-cpp、triton） |
 | `--no-manager` | 不安裝 ComfyUI-Manager |
 | `--no-browser` | 不自動開啟瀏覽器 |
 | `--skip-install` | 跳過依賴安裝步驟 |
@@ -65,7 +67,8 @@ start.bat --port 8189 --update
   "extra_args": [],
   "auto_open_browser": true,
   "torch_index": null,
-  "install_manager": true
+  "install_manager": true,
+  "extras": []
 }
 ```
 
@@ -94,6 +97,9 @@ start.bat --port 8189 --update
 
 **如何更新 ComfyUI？**
 執行 `start.bat --update`，或在 ComfyUI 資料夾裡執行 `git pull`。
+
+**怎麼安裝 SageAttention、FlashAttention 這些加速函式庫？**
+執行 `start.bat --extras sageattention,flash-attn,llama-cpp,triton`，或在 `launcher.json` 裡加上 `"extras": ["sageattention", "flash-attn", "llama-cpp", "triton"]`，啟動器就會在每次啟動時檢查並補裝缺少的項目。PyTorch 本身啟動器本來就會裝，不需要列在裡面。注意：flash-attn 在 Windows 上不一定有對應你 Python / PyTorch / CUDA 版本的預編譯包，找不到時只會警告並繼續啟動，不會嘗試從原始碼編譯（編譯要很久）。llama-cpp-python 預設裝的是 CPU 版，需要 CUDA 加速要另外用 `CMAKE_ARGS=-DGGML_CUDA=on` 自行編譯。
 
 **怎麼用 Manager 安裝自訂節點或模型？**
 啟動後點 ComfyUI 介面右側的 Manager 按鈕，裡面可以搜尋並安裝自訂節點、模型和工作流。啟動器會在第一次啟動時自動裝好 Manager；不想裝的話用 `start.bat --no-manager`。
