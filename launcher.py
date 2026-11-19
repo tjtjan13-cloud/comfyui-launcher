@@ -95,9 +95,27 @@ EXTRAS = {
     ),
     "triton": (
         "triton", "triton",
-        "Triton usually comes with PyTorch already; installing it "
-        "separately is rarely needed.",
+        "On Windows there are no official triton wheels, so the launcher "
+        "installs the community triton-windows build instead; if no wheel "
+        "matches your Python/torch combination it cannot be installed. "
+        "See https://github.com/triton-lang/triton-windows.",
     ),
+}
+# PyTorch (major, minor) -> triton-windows upper bound (exclusive).
+# Each torch minor pairs with exactly one triton minor, and a newer
+# triton can break torch.compile, so the Windows triton install is
+# capped below the next minor. Torch versions not listed here install
+# unpinned triton-windows.
+TORCH_TRITON_CAPS = {
+    (2, 7): "3.4",
+    (2, 8): "3.5",
+    (2, 9): "3.6",
+    (2, 10): "3.7",
+    (2, 11): "3.7",
+    (2, 12): "3.8",
+    (2, 13): "3.8",
+    (2, 14): "3.9",
+    (2, 15): "3.10",
 }
 # Startup hook that silences the harmless WinError 10054 asyncio noise
 # on Windows (see ensure_quiet_asyncio). A .pth file in the venv's
@@ -490,6 +508,42 @@ def module_installed(python: Path, module: str) -> bool:
     return result.returncode == 0
 
 
+def torch_version(python: Path):
+    """Return the installed torch (major, minor) in the venv, or None."""
+    try:
+        result = subprocess.run(
+            [str(python), "-c",
+             "import torch; print(torch.__version__)"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    version = result.stdout.strip().split("+")[0]  # strip "+cu130"
+    parts = version.split(".")
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except (ValueError, IndexError):
+        return None
+
+
+def triton_package(python: Path) -> str:
+    """pip requirement for triton on this platform.
+
+    Windows has no official triton wheels, so the community
+    triton-windows build is used, capped below the next triton minor
+    for the installed torch (each torch minor pairs with one triton
+    minor; a newer triton can break torch.compile).
+    """
+    if os.name != "nt":
+        return "triton"
+    cap = TORCH_TRITON_CAPS.get(torch_version(python))
+    if cap:
+        return f"triton-windows<{cap}"
+    return "triton-windows"
+
+
 def install_extra(python: Path, name: str) -> bool:
     """Install one optional extra (best effort). Returns True on success.
 
@@ -502,6 +556,8 @@ def install_extra(python: Path, name: str) -> bool:
     if module_installed(python, module):
         log(f"Extra '{name}' already installed; skipping.")
         return True
+    if name == "triton":
+        package = triton_package(python)
     log(f"Installing extra '{name}' ({package}) ...")
     result = pip_install(python, ["--only-binary", ":all:", package], check=False)
     if result.returncode == 0:
@@ -534,16 +590,23 @@ def ensure_extras(python: Path, extras) -> None:
 # is importable, the installed version (if any), and torch's CUDA info.
 VENV_STATUS_SCRIPT = '''
 import importlib.metadata, importlib.util, json
-pkgs = {"torch": "torch", "sageattention": "sageattention",
-        "flash-attn": "flash_attn", "llama-cpp-python": "llama_cpp",
-        "triton": "triton"}
+# display name -> (import name, pip distributions to check for a version)
+pkgs = {"torch": ("torch", ["torch"]),
+        "sageattention": ("sageattention", ["sageattention"]),
+        "flash-attn": ("flash_attn", ["flash-attn"]),
+        "llama-cpp-python": ("llama_cpp", ["llama-cpp-python"]),
+        "triton": ("triton", ["triton", "triton-windows"])}
 out = {}
-for pkg, mod in pkgs.items():
-    info = {"importable": importlib.util.find_spec(mod) is not None}
-    try:
-        info["version"] = importlib.metadata.version(pkg)
-    except importlib.metadata.PackageNotFoundError:
-        info["version"] = None
+for pkg, (mod, dists) in pkgs.items():
+    info = {"importable": importlib.util.find_spec(mod) is not None,
+            "version": None, "dist": None}
+    for dist in dists:
+        try:
+            info["version"] = importlib.metadata.version(dist)
+            info["dist"] = dist
+            break
+        except importlib.metadata.PackageNotFoundError:
+            continue
     out[pkg] = info
 try:
     import torch
@@ -623,6 +686,8 @@ def check_status(python: Path, comfyui_dir: Path) -> int:
                 if info.get("importable") and info.get("version"):
                     state = "installed"
                     version = info["version"]
+                    if pkg == "triton" and info.get("dist") == "triton-windows":
+                        version += " (triton-windows)"
                     if pkg == "torch":
                         if info.get("cuda"):
                             gpu = ("GPU available" if info.get("cuda_available")

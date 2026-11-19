@@ -106,6 +106,9 @@ start.bat --port 8189 --update
 **怎麼安裝 SageAttention、FlashAttention 這些加速函式庫？**
 執行 `start.bat --extras sageattention,flash-attn,llama-cpp,triton`，或在 `launcher.json` 裡加上 `"extras": ["sageattention", "flash-attn", "llama-cpp", "triton"]`，啟動器就會在每次啟動時檢查並補裝缺少的項目。PyTorch 本身啟動器本來就會裝，不需要列在裡面。注意：flash-attn 在 Windows 上不一定有對應你 Python / PyTorch / CUDA 版本的預編譯包，找不到時只會警告並繼續啟動，不會嘗試從原始碼編譯（編譯要很久）。llama-cpp-python 預設裝的是 CPU 版，需要 CUDA 加速要另外用 `CMAKE_ARGS=-DGGML_CUDA=on` 自行編譯。
 
+**出現 PatchTritonVAE requires triton，節點無法使用？**
+Windows 上沒有官方 triton，要裝社群版 triton-windows，而且版本要跟 PyTorch 配對（例如 PyTorch 2.14 配 Triton 3.8）。執行 `start.bat --extras triton`，啟動器會自動按你的 PyTorch 版本裝對應的 triton-windows，裝完重啟 ComfyUI 即可。
+
 **怎麼檢查 PyTorch 和加速函式庫裝沒裝？**
 執行 `start.bat --check`，會列出 PyTorch、各加速函式庫、ComfyUI 和 ComfyUI-Manager 的安裝狀態（帶版本號），然後退出，不會啟動 ComfyUI。缺的加速函式庫會提示用 `--extras` 補裝。
 
