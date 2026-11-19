@@ -10,6 +10,7 @@
 - 啟動服務後自動在瀏覽器開啟 `http://127.0.0.1:8188`
 - 自動安裝 [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager)（自訂節點管理器），啟動後在 ComfyUI 介面裡點 Manager 按鈕就能安裝節點和模型
 - 可選安裝加速函式庫：`--extras sageattention,flash-attn,llama-cpp,triton`（或寫在 `launcher.json` 的 `extras` 裡），已安裝的會自動跳過，安裝失敗只會警告、不會影響啟動
+- 自動過濾 Windows 上無害的 WinError 10054 asyncio 報錯（瀏覽器斷線時的 ConnectionResetError），其他錯誤照常顯示
 - 支援更新 ComfyUI、更換端口、傳遞額外啟動參數
 - 設定可寫在 `launcher.json` 裡永久保存
 
@@ -95,6 +96,9 @@ start.bat --port 8189 --update
 
 **git clone 失敗，出現 SSL/TLS connection failed？**
 這是 git 連 GitHub 時的安全連線問題，通常是暫時的，重試一次大多能成功。啟動器會自動重試 3 次，失敗時改用直接下載 ZIP 的方式。如果一直失敗，檢查 VPN、代理、防火牆或防毒軟體是否擋住了 git，或確認系統時間正確。也可以手動從 https://github.com/comfyanonymous/ComfyUI 下載 ZIP，解壓到 ComfyUI 資料夾（讓 main.py 位於 `./ComfyUI/main.py`），再執行啟動器。
+
+**出現 ConnectionResetError [WinError 10054] 的報錯？**
+這是瀏覽器分頁斷線時 asyncio 印出的訊息，伺服器本身沒事。啟動器會自動在虛擬環境裡裝一個過濾器（`_comfyui_launcher_quiet.pth` 和 `_comfyui_launcher_quiet.py`），只擋掉這一種報錯，其他錯誤照常顯示；更新 launcher.py 後下次啟動就生效。想關掉過濾器的話，刪掉上面那兩個檔案即可。
 
 **如何更新 ComfyUI？**
 執行 `start.bat --update`，或在 ComfyUI 資料夾裡執行 `git pull`。

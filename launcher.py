@@ -16,6 +16,11 @@ One-command setup + launch for ComfyUI:
      failed install only warns — ComfyUI still launches.
   7. Starts the ComfyUI server and opens it in the browser.
 
+On Windows the launcher also installs a small startup hook in the venv
+(a .pth file plus a helper module) that silences the harmless WinError
+10054 asyncio traceback ComfyUI logs when a browser tab disconnects;
+other errors are still reported.
+
 Usage:
   Double-click start.bat (Windows), or run:
       python launcher.py
@@ -94,6 +99,52 @@ EXTRAS = {
         "separately is rarely needed.",
     ),
 }
+# Startup hook that silences the harmless WinError 10054 asyncio noise
+# on Windows (see ensure_quiet_asyncio). A .pth file in the venv's
+# site-packages is used instead of sitecustomize.py, because a
+# sitecustomize.py shipped with the system Python would shadow the
+# venv's copy (the stdlib comes first on sys.path). The .pth file
+# imports the helper module at interpreter startup, before ComfyUI
+# runs, so the policy applies to every event loop ComfyUI creates.
+# It only swallows ConnectionResetError callbacks (a browser tab
+# disconnecting mid-request, logged by the proactor loop as WinError
+# 10054); every other error is reported exactly as before.
+QUIET_MODULE_NAME = "_comfyui_launcher_quiet"
+QUIET_PTH_NAME = "_comfyui_launcher_quiet.pth"
+# Marker identifying files installed by this launcher, so
+# ensure_quiet_asyncio() never overwrites someone else's files.
+QUIET_MARKER = "# ComfyUI-Launcher: asyncio noise filter"
+QUIET_MODULE_CONTENT = '''# ComfyUI-Launcher: asyncio noise filter
+# On Windows, ComfyUI's server runs on asyncio's proactor event loop,
+# which logs a scary-looking ConnectionResetError traceback (WinError
+# 10054) whenever a browser tab disconnects. The server keeps running;
+# the message is just noise. This module hides only that message.
+# Installed by the ComfyUI launcher; safe to delete (together with the
+# _comfyui_launcher_quiet.pth file that imports it).
+try:
+    import asyncio
+
+    class _QuietProactorPolicy(asyncio.DefaultEventLoopPolicy):
+        def new_event_loop(self):
+            loop = super().new_event_loop()
+            prev_handler = loop.get_exception_handler()
+
+            def handler(loop, context):
+                if isinstance(context.get("exception"), ConnectionResetError):
+                    return
+                if prev_handler is not None:
+                    prev_handler(loop, context)
+                else:
+                    loop.default_exception_handler(context)
+
+            loop.set_exception_handler(handler)
+            return loop
+
+    asyncio.set_event_loop_policy(_QuietProactorPolicy())
+except Exception:
+    pass
+'''
+QUIET_PTH_CONTENT = QUIET_MARKER + "\nimport " + QUIET_MODULE_NAME + "\n"
 
 
 def log(msg: str) -> None:
@@ -204,6 +255,62 @@ def ensure_venv() -> Path:
         raise fail(f"venv was created but {python} is missing.")
     run([str(python), "-m", "pip", "install", "--upgrade", "pip"])
     return python
+
+
+def _install_quiet_file(target: Path, content: str) -> str:
+    """Install one noise-filter file. Returns 'current', 'wrote' or 'blocked'.
+
+    'blocked' means a foreign file is in the way (never overwritten) or
+    the write failed.
+    """
+    try:
+        if target.exists():
+            existing = target.read_text(encoding="utf-8")
+            if existing == content:
+                return "current"
+            if QUIET_MARKER not in existing:
+                return "blocked"
+        target.write_text(content, encoding="utf-8")
+        return "wrote"
+    except OSError:
+        return "blocked"
+
+
+def ensure_quiet_asyncio(python: Path) -> None:
+    """Silence the harmless WinError 10054 asyncio noise (Windows only).
+
+    ComfyUI's server runs on asyncio's proactor loop, which logs a
+    ConnectionResetError traceback whenever a browser tab disconnects.
+    The server keeps running; the message is just noise. A .pth file
+    plus a helper module in the venv hide only that message.
+    Never overwrites files the launcher did not install.
+    """
+    if os.name != "nt":
+        return
+    site_packages = VENV_DIR / "Lib" / "site-packages"
+    if not site_packages.is_dir():
+        # Non-standard venv layout; ask the venv python where it lives.
+        try:
+            result = subprocess.run(
+                [str(python), "-c",
+                 "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                capture_output=True, text=True, timeout=30,
+            )
+            site_packages = Path(result.stdout.strip())
+        except (subprocess.SubprocessError, OSError):
+            return
+        if not site_packages.is_dir():
+            return
+    results = [
+        _install_quiet_file(site_packages / (QUIET_MODULE_NAME + ".py"),
+                            QUIET_MODULE_CONTENT),
+        _install_quiet_file(site_packages / QUIET_PTH_NAME, QUIET_PTH_CONTENT),
+    ]
+    if "wrote" in results:
+        log("Installed asyncio noise filter.")
+    if "blocked" in results:
+        log("WARNING: could not install the asyncio noise filter; "
+            "the WinError 10054 message may still appear.")
 
 
 def clone_comfyui() -> bool:
@@ -646,6 +753,7 @@ def main() -> int:
     check_git()
 
     python = ensure_venv()
+    ensure_quiet_asyncio(python)
     # Allow --comfyui-dir to point at an existing install.
     global COMFYUI_DIR
     COMFYUI_DIR = comfyui_dir
