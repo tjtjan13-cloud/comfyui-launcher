@@ -22,6 +22,7 @@ Usage:
       python launcher.py --port 8189 --update
       python launcher.py --cpu --no-browser
       python launcher.py --extras sageattention,triton
+      python launcher.py --check
 
 Persistent defaults live in launcher.json next to this file.
 Only the Python standard library is used.
@@ -421,6 +422,135 @@ def ensure_extras(python: Path, extras) -> None:
         install_extra(python, name)
 
 
+# Script run inside the venv to report installed packages as JSON.
+# Keys are pip distribution names; each value carries whether the module
+# is importable, the installed version (if any), and torch's CUDA info.
+VENV_STATUS_SCRIPT = '''
+import importlib.metadata, importlib.util, json
+pkgs = {"torch": "torch", "sageattention": "sageattention",
+        "flash-attn": "flash_attn", "llama-cpp-python": "llama_cpp",
+        "triton": "triton"}
+out = {}
+for pkg, mod in pkgs.items():
+    info = {"importable": importlib.util.find_spec(mod) is not None}
+    try:
+        info["version"] = importlib.metadata.version(pkg)
+    except importlib.metadata.PackageNotFoundError:
+        info["version"] = None
+    out[pkg] = info
+try:
+    import torch
+    out["torch"]["cuda"] = torch.version.cuda
+    out["torch"]["cuda_available"] = torch.cuda.is_available()
+except Exception:
+    pass
+print(json.dumps(out))
+'''
+
+# Order and short names used by the status check.
+STATUS_PACKAGES = ("torch", "sageattention", "flash-attn",
+                   "llama-cpp-python", "triton")
+# pip distribution name -> --extras short name.
+EXTRA_SHORT_NAMES = {
+    "sageattention": "sageattention",
+    "flash-attn": "flash-attn",
+    "llama-cpp-python": "llama-cpp",
+    "triton": "triton",
+}
+
+
+def query_venv_packages(python: Path) -> dict:
+    """Ask the venv python which status packages are installed.
+
+    Returns {pip name: {"importable": bool, "version": str|None, ...}}.
+    Returns {} when the query itself fails.
+    """
+    try:
+        result = subprocess.run(
+            [str(python), "-c", VENV_STATUS_SCRIPT],
+            capture_output=True, text=True, timeout=180,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        return {}
+    try:
+        data = json.loads(lines[-1])
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def check_status(python: Path, comfyui_dir: Path) -> int:
+    """Print the install status of torch, extras, ComfyUI and Manager.
+
+    Read-only: never creates the venv or downloads anything.
+    Always returns 0; missing pieces are reported, not errors.
+    """
+    log("=== ComfyUI Launcher status check ===")
+    log(f"Python: {sys.version_info.major}.{sys.version_info.minor}."
+        f"{sys.version_info.micro} ({sys.executable})")
+    gpu_name, compute_cap = detect_gpu()
+    if gpu_name:
+        cap = f" (compute capability {compute_cap})" if compute_cap else ""
+        log(f"GPU: {gpu_name}{cap}")
+    else:
+        log("GPU: no NVIDIA GPU detected")
+    if not python.exists():
+        log("Virtual environment: not created yet (run the launcher once "
+            "to set it up).")
+    else:
+        log(f"Virtual environment: {VENV_DIR}")
+        status = query_venv_packages(python)
+        if not status:
+            log("Could not query the virtual environment; is its Python "
+                "working? Try running the launcher once normally.")
+        else:
+            print()
+            print(f"  {'package':<18}{'status':<14}version")
+            for pkg in STATUS_PACKAGES:
+                info = status.get(pkg, {})
+                if info.get("importable") and info.get("version"):
+                    state = "installed"
+                    version = info["version"]
+                    if pkg == "torch":
+                        if info.get("cuda"):
+                            gpu = ("GPU available" if info.get("cuda_available")
+                                   else "GPU not available")
+                            version += f" (CUDA {info['cuda']}, {gpu})"
+                        else:
+                            version += " (CPU build)"
+                elif info.get("importable"):
+                    state = "installed"
+                    version = "(version unknown)"
+                elif info.get("version"):
+                    state = "BROKEN"
+                    version = (f"{info['version']} "
+                               "(installed but cannot be imported)")
+                else:
+                    state = "not installed"
+                    version = "-"
+                print(f"  {pkg:<18}{state:<14}{version}")
+            print()
+            missing = [p for p in STATUS_PACKAGES[1:]
+                       if not status.get(p, {}).get("importable")]
+            if missing:
+                log("Missing extras can be installed with: "
+                    "start.bat --extras "
+                    + ",".join(EXTRA_SHORT_NAMES[p] for p in missing))
+    comfyui_state = ("installed" if (comfyui_dir / "main.py").exists()
+                     else "not downloaded yet")
+    log(f"ComfyUI: {comfyui_state} ({comfyui_dir})")
+    manager_dir = comfyui_dir / "custom_nodes" / MANAGER_DIRNAME
+    manager_state = ("installed" if (manager_dir / "__init__.py").exists()
+                     else "not installed")
+    log(f"ComfyUI-Manager: {manager_state}")
+    return 0
+
+
 def port_in_use(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(1)
@@ -491,6 +621,10 @@ def parse_args(config: dict) -> argparse.Namespace:
                         help="do not open the browser automatically")
     parser.add_argument("--skip-install", action="store_true",
                         help="skip the dependency-install step")
+    parser.add_argument("--check", action="store_true",
+                        help="print the install status of PyTorch, the "
+                             "optional extras, ComfyUI and ComfyUI-Manager, "
+                             "then exit without launching")
     parser.add_argument("--comfyui-dir", default=str(COMFYUI_DIR),
                         help="use an existing ComfyUI folder instead of ./ComfyUI")
     parser.add_argument("extra", nargs=argparse.REMAINDER,
@@ -507,6 +641,8 @@ def main() -> int:
 
     log("=== ComfyUI Launcher ===")
     check_python()
+    if args.check:
+        return check_status(venv_python(), comfyui_dir)
     check_git()
 
     python = ensure_venv()

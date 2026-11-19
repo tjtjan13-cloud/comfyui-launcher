@@ -44,6 +44,7 @@ python3 launcher.py
 | `--cpu` | 強制使用 CPU 版 PyTorch |
 | `--torch-index 網址` | 指定 PyTorch 下載來源，例如 `https://download.pytorch.org/whl/cu121`（舊顯卡用） |
 | `--extras 清單` | 安裝可選加速函式庫，逗號分隔，例如 `--extras sageattention,triton`（可選：sageattention、flash-attn、llama-cpp、triton） |
+| `--check` | 列出 PyTorch、各加速函式庫、ComfyUI 和 ComfyUI-Manager 的安裝狀態，然後退出，不啟動 ComfyUI |
 | `--no-manager` | 不安裝 ComfyUI-Manager |
 | `--no-browser` | 不自動開啟瀏覽器 |
 | `--skip-install` | 跳過依賴安裝步驟 |
@@ -100,6 +101,9 @@ start.bat --port 8189 --update
 
 **怎麼安裝 SageAttention、FlashAttention 這些加速函式庫？**
 執行 `start.bat --extras sageattention,flash-attn,llama-cpp,triton`，或在 `launcher.json` 裡加上 `"extras": ["sageattention", "flash-attn", "llama-cpp", "triton"]`，啟動器就會在每次啟動時檢查並補裝缺少的項目。PyTorch 本身啟動器本來就會裝，不需要列在裡面。注意：flash-attn 在 Windows 上不一定有對應你 Python / PyTorch / CUDA 版本的預編譯包，找不到時只會警告並繼續啟動，不會嘗試從原始碼編譯（編譯要很久）。llama-cpp-python 預設裝的是 CPU 版，需要 CUDA 加速要另外用 `CMAKE_ARGS=-DGGML_CUDA=on` 自行編譯。
+
+**怎麼檢查 PyTorch 和加速函式庫裝沒裝？**
+執行 `start.bat --check`，會列出 PyTorch、各加速函式庫、ComfyUI 和 ComfyUI-Manager 的安裝狀態（帶版本號），然後退出，不會啟動 ComfyUI。缺的加速函式庫會提示用 `--extras` 補裝。
 
 **怎麼用 Manager 安裝自訂節點或模型？**
 啟動後點 ComfyUI 介面右側的 Manager 按鈕，裡面可以搜尋並安裝自訂節點、模型和工作流。啟動器會在第一次啟動時自動裝好 Manager；不想裝的話用 `start.bat --no-manager`。
